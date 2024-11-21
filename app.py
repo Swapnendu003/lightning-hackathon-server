@@ -41,7 +41,7 @@ swagger_template = {
     },
     "host": "lightning-hackathon-server.onrender.com",  # Change to your server host
     "basePath": "/",
-    "schemes": ["http"],
+    "schemes": ["https"],
 }
 swagger = Swagger(app, config=swagger_config, template=swagger_template)
 
