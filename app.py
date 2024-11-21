@@ -9,7 +9,8 @@ from werkzeug.utils import secure_filename
 import logging
 import base64
 from werkzeug.datastructures import FileStorage
-import re  # Added for parsing questions
+import re
+import openai  
 
 # Load environment variables from .env file
 load_dotenv()
@@ -418,8 +419,11 @@ def generate_questions():
         # At this point, syllabus_text contains the syllabus either from text or extracted from image
         # Prepare the payload to generate questions
         prompt = (
+            f"You are an educational assistant tasked with generating exam questions. "
             f"Based on the following syllabus, generate up to 10 questions: "
-            f"5 short questions and 5 descriptive questions.\n\nSyllabus:\n{syllabus_text}"
+            f"5 short (multiple-choice or short-answer) questions and 5 descriptive (essay or open-ended) questions. "
+            f"Ensure that the questions directly test understanding, application, and analysis of the syllabus content. Avoid generic or irrelevant questions.\n\n"
+            f"Syllabus:\n{syllabus_text}"
         )
 
         payload_questions = {
@@ -498,6 +502,197 @@ def generate_questions():
     except Exception as e:
         logger.error(f"Server error: {str(e)}")
         return jsonify({'error': f"Server error: {str(e)}"}), 500
+
+import openai
+
+@app.route('/evaluate-answer', methods=['POST'])
+@swag_from({
+    "tags": ["Answer Evaluation"],
+    "description": "Evaluate a student's answer to a given question. Both the question and the answer should be provided as images.",
+    "consumes": ["multipart/form-data"],
+    "parameters": [
+        {
+            "name": "question_image",
+            "in": "formData",
+            "type": "file",
+            "required": True,
+            "description": "Image file of the question."
+        },
+        {
+            "name": "answer_image",
+            "in": "formData",
+            "type": "file",
+            "required": True,
+            "description": "Image file of the student's answer."
+        }
+    ],
+    "responses": {
+        200: {
+            "description": "Answer evaluated successfully",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "evaluation": {
+                        "type": "string",
+                        "example": "The student's answer is correct and demonstrates a clear understanding of the topic..."
+                    },
+                    "score": {
+                        "type": "integer",
+                        "example": 8
+                    }
+                }
+            }
+        },
+        400: {"description": "Invalid input"},
+        502: {"description": "Error communicating with APIs"},
+        500: {"description": "Internal server error"}
+    }
+})
+def evaluate_answer():
+    """Endpoint to evaluate a student's answer based on the question and answer images."""
+    try:
+        # Check if both images are provided
+        if 'question_image' not in request.files or 'answer_image' not in request.files:
+            logger.warning("Both question_image and answer_image must be provided.")
+            return jsonify({'error': 'Both question_image and answer_image must be provided.'}), 400
+
+        question_image = request.files['question_image']
+        answer_image = request.files['answer_image']
+
+        # Validate the uploaded files
+        if not (question_image and allowed_file(question_image.filename)):
+            logger.warning("Invalid or no question_image uploaded.")
+            return jsonify({'error': 'Invalid or no question_image uploaded. Please upload a valid image file.'}), 400
+        if not (answer_image and allowed_file(answer_image.filename)):
+            logger.warning("Invalid or no answer_image uploaded.")
+            return jsonify({'error': 'Invalid or no answer_image uploaded. Please upload a valid image file.'}), 400
+
+        # Save and process the question image
+        question_filename = secure_filename(question_image.filename)
+        question_file_path = os.path.join(app.config['UPLOAD_FOLDER'], question_filename)
+        question_image.save(question_file_path)
+        logger.info(f"Saved uploaded question image to {question_file_path}")
+
+        with open(question_file_path, "rb") as image_file:
+            encoded_question_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+        # Save and process the answer image
+        answer_filename = secure_filename(answer_image.filename)
+        answer_file_path = os.path.join(app.config['UPLOAD_FOLDER'], answer_filename)
+        answer_image.save(answer_file_path)
+        logger.info(f"Saved uploaded answer image to {answer_file_path}")
+
+        with open(answer_file_path, "rb") as image_file:
+            encoded_answer_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+        # Extract text from images using Sambanova API
+        question_text = extract_text_from_image(encoded_question_image, question_filename, "question")
+        answer_text = extract_text_from_image(encoded_answer_image, answer_filename, "answer")
+
+        # Optionally, delete the uploaded images after processing
+        os.remove(question_file_path)
+        os.remove(answer_file_path)
+        logger.info(f"Deleted uploaded image files after processing.")
+
+        # Final evaluation using OpenAI
+        final_evaluation, total_score = evaluate_using_openai(question_text, answer_text)
+
+        return jsonify({
+            'evaluation': final_evaluation,
+            'score': total_score
+        }), 200
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request exception: {str(e)}")
+        return jsonify({'error': f"Request exception: {str(e)}"}), 502
+    except Exception as e:
+        logger.error(f"Server error: {str(e)}")
+        return jsonify({'error': f"Server error: {str(e)}"}), 500
+
+
+def extract_text_from_image(encoded_image, filename, context):
+    """Extract text from an image using Sambanova AI."""
+    payload_image = {
+        "stream": False,
+        "model": "Llama-3.2-11B-Vision-Instruct",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Extract the {context} text from the following image."
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/{filename.rsplit('.',1)[1].lower()};base64,{encoded_image}"
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    headers_image = {
+        "Authorization": f"Bearer {SAMBANOVA_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    logger.info(f"Sending {context} image to Sambanova AI API for text extraction.")
+    response = requests.post(
+        SAMBANOVA_CHAT_API_URL,
+        json=payload_image,
+        headers=headers_image
+    )
+
+    if response.status_code != 200:
+        logger.error(f"Sambanova API error during {context} image processing: {response.status_code} - {response.text}")
+        raise Exception(f"Sambanova API error during {context} image processing: {response.text}")
+
+    json_response = response.json()
+    try:
+        extracted_text = json_response['choices'][0]['message']['content'].strip()
+        logger.info(f"Extracted {context} text from image successfully.")
+        return extracted_text
+    except (KeyError, IndexError):
+        logger.error(f"Unexpected response structure from Sambanova API during {context} image processing.")
+        logger.debug(f"Sambanova API Response: {json_response}")
+        raise Exception("Unexpected response structure from Sambanova API.")
+
+def evaluate_using_openai(question_text, answer_text):
+    """Evaluate the answer using OpenAI's API."""
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+
+    evaluation_prompt = (
+        f"As an experienced educator, evaluate the student's answer to the following question. "
+        f"Provide detailed feedback on the correctness, completeness, clarity, and areas for improvement. "
+        f"Assign a score out of 10 for the answer.\n\n"
+        f"Question:\n{question_text}\n\n"
+        f"Student's Answer:\n{answer_text}\n\n"
+        f"Feedback and Score:"
+    )
+
+    try:
+        response = openai.Completion.create(
+            engine="text-davinci-003",
+            prompt=evaluation_prompt,
+            max_tokens=300
+        )
+
+        evaluation = response['choices'][0]['text'].strip()
+        logger.info("Final evaluation completed using OpenAI.")
+
+        # Extract score from evaluation text (assumes score is mentioned as "Score: X/10")
+        match = re.search(r"Score:\s*(\d+)/10", evaluation)
+        total_score = int(match.group(1)) if match else None
+
+        return evaluation, total_score
+
+    except openai.error.OpenAIError as e:
+        logger.error(f"OpenAI API error: {str(e)}")
+        raise Exception(f"OpenAI API error: {str(e)}")
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
