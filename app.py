@@ -503,7 +503,6 @@ def generate_questions():
         logger.error(f"Server error: {str(e)}")
         return jsonify({'error': f"Server error: {str(e)}"}), 500
 
-import openai
 
 @app.route('/evaluate-answer', methods=['POST'])
 @swag_from({
@@ -695,5 +694,5 @@ def evaluate_using_openai(question_text, answer_text):
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5000))  
     app.run(host='0.0.0.0', port=port)
