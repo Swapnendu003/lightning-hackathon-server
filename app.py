@@ -39,7 +39,7 @@ swagger_template = {
         "description": "API for generating articles and questions using Sambanova AI.",
         "version": "1.0.0",
     },
-    "host": "localhost:5000",  # Change to your server host
+    "host": "https://lightning-hackathon-server.onrender.com",  # Change to your server host
     "basePath": "/",
     "schemes": ["http"],
 }
