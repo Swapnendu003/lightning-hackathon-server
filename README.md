@@ -1,4 +1,4 @@
-```markdown
+
 # 📚 Prepify Backend
 
 [![GitHub](https://img.shields.io/github/license/Swapnendu003/lightning-hackathon-server)](https://github.com/Swapnendu003/lightning-hackathon-server/blob/main/LICENSE)
