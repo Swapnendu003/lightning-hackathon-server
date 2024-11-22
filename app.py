@@ -189,6 +189,12 @@ def generate_article():
         logger.error(f"Server error: {str(e)}")
         return jsonify({'error': f"Server error: {str(e)}"}), 500
 
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 @app.route('/generate-questions', methods=['POST'])
 @swag_from({
     "tags": ["Question Generation"],
@@ -223,14 +229,14 @@ def generate_article():
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "example": "What is the role of AI in healthcare?"
+                            "example": "What is the role of AI in healthcare? (5 marks)"
                         }
                     },
                     "descriptive_questions": {
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "example": "Explain how AI technologies can improve diagnostic accuracy in healthcare."
+                            "example": "Explain how AI technologies can improve diagnostic accuracy in healthcare. (15 marks)"
                         }
                     }
                 }
@@ -340,16 +346,17 @@ def generate_questions():
             if not syllabus_text:
                 return jsonify({'error': 'Empty syllabus_text provided.'}), 400
 
-        # Updated prompt
+        # Updated prompt to include marks and ensure short questions are normal questions
         prompt = (
             f"You are an educational assistant tasked with generating exam questions. "
-            f"Based on the following syllabus, generate exactly 5 short (multiple-choice or short-answer) questions and exactly 5 descriptive (essay or open-ended) questions. "
-            f"Please ensure your response is in valid JSON format with the specified structure.\n\n"
+            f"Based on the following syllabus, generate exactly 5 short questions and exactly 5 descriptive questions. "
+            f"Each question should have the marks allocated at the end in brackets. "
+            f"For short questions, provide normal questions without multiple-choice options.\n\n"
             f"Syllabus:\n{syllabus_text}\n\n"
             f"Response Format:\n"
             f"{{\n"
-            f'    "short_questions": ["Short Question 1", "Short Question 2", "Short Question 3", "Short Question 4", "Short Question 5"],\n'
-            f'    "descriptive_questions": ["Descriptive Question 1", "Descriptive Question 2", "Descriptive Question 3", "Descriptive Question 4", "Descriptive Question 5"]\n'
+            f'    "short_questions": ["Short Question 1 (5 marks)", "Short Question 2 (5 marks)", "Short Question 3 (5 marks)", "Short Question 4 (5 marks)", "Short Question 5 (5 marks)"],\n'
+            f'    "descriptive_questions": ["Descriptive Question 1 (15 marks)", "Descriptive Question 2 (15 marks)", "Descriptive Question 3 (15 marks)", "Descriptive Question 4 (15 marks)", "Descriptive Question 5 (15 marks)"]\n'
             f"}}"
         )
 
@@ -426,7 +433,7 @@ def generate_questions():
     except Exception as e:
         logger.error(f"Server error: {str(e)}")
         return jsonify({'error': f"Server error: {str(e)}"}), 500
-
+        
 @app.route('/evaluate-answer', methods=['POST'])
 @swag_from({
     "tags": ["Answer Evaluation"],
