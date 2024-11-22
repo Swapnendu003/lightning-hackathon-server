@@ -481,20 +481,23 @@ def generate_questions():
     }
 })
 def evaluate_answer():
+    """Evaluate a student's answer to a given question."""
     try:
-
         if 'question_image' not in request.files or 'answer_image' not in request.files:
             logger.warning("Missing images in the request.")
             return jsonify({'error': 'Both question_image and answer_image must be provided.'}), 400
 
         question_image = request.files['question_image']
         answer_image = request.files['answer_image']
+
         if not (question_image and allowed_file(question_image.filename)):
             logger.warning("Invalid question_image uploaded.")
             return jsonify({'error': 'Invalid or no question_image uploaded. Please upload a valid image file.'}), 400
         if not (answer_image and allowed_file(answer_image.filename)):
             logger.warning("Invalid answer_image uploaded.")
             return jsonify({'error': 'Invalid or no answer_image uploaded. Please upload a valid image file.'}), 400
+
+        # Process Question Image
         question_filename = secure_filename(question_image.filename)
         question_file_path = os.path.join(app.config['UPLOAD_FOLDER'], question_filename)
         try:
@@ -502,8 +505,10 @@ def evaluate_answer():
             with open(question_file_path, "rb") as image_file:
                 encoded_question_image = base64.b64encode(image_file.read()).decode('utf-8')
         except Exception as e:
-            logger.error(f"Error processing question image: {str(e)}")
-            return jsonify({'error': f"Error processing question image: {str(e)}"}), 500
+            logger.error(f"Error processing question image: {e}")
+            return jsonify({'error': f"Error processing question image: {e}"}), 500
+
+        # Process Answer Image
         answer_filename = secure_filename(answer_image.filename)
         answer_file_path = os.path.join(app.config['UPLOAD_FOLDER'], answer_filename)
         try:
@@ -511,27 +516,30 @@ def evaluate_answer():
             with open(answer_file_path, "rb") as image_file:
                 encoded_answer_image = base64.b64encode(image_file.read()).decode('utf-8')
         except Exception as e:
-            logger.error(f"Error processing answer image: {str(e)}")
-            return jsonify({'error': f"Error processing answer image: {str(e)}"}), 500
+            logger.error(f"Error processing answer image: {e}")
+            return jsonify({'error': f"Error processing answer image: {e}"}), 500
 
+        # Extract Text from Images
         try:
             question_text = extract_text_from_image(encoded_question_image, question_filename, "question")
             answer_text = extract_text_from_image(encoded_answer_image, answer_filename, "answer")
         except Exception as e:
-            logger.error(f"Error extracting text from images: {str(e)}")
-            return jsonify({'error': f"Error extracting text from images: {str(e)}"}), 502
+            logger.error(f"Error extracting text from images: {e}")
+            return jsonify({'error': f"Error extracting text from images: {e}"}), 502
         finally:
+            # Clean up uploaded files
             try:
                 os.remove(question_file_path)
                 os.remove(answer_file_path)
             except Exception as e:
-                logger.warning(f"Error cleaning up files: {str(e)}")
+                logger.warning(f"Error cleaning up files: {e}")
 
+        # Evaluate using Sambanova
         try:
             final_evaluation, total_score = evaluate_using_sambanova(question_text, answer_text)
         except Exception as e:
-            logger.error(f"Error during evaluation: {str(e)}")
-            return jsonify({'error': f"Server error: {str(e)}"}), 500
+            logger.error(f"Error during evaluation: {e}")
+            return jsonify({'error': f"Server error: {e}"}), 500
 
         return jsonify({
             'evaluation': final_evaluation,
@@ -539,10 +547,11 @@ def evaluate_answer():
         }), 200
 
     except Exception as e:
-        logger.error(f"Unexpected server error: {str(e)}")
-        return jsonify({'error': f"Server error: {str(e)}"}), 500
+        logger.error(f"Unexpected server error: {e}")
+        return jsonify({'error': f"Server error: {e}"}), 500
 
 def extract_text_from_image(encoded_image, filename, context):
+    """Extract text from an image using Sambanova API."""
     try:
         payload_image = {
             "stream": False,
@@ -588,29 +597,30 @@ def extract_text_from_image(encoded_image, filename, context):
             logger.info(f"Extracted {context} text successfully.")
             return extracted_text
         except (KeyError, IndexError, json.JSONDecodeError) as e:
-            logger.error(f"Error parsing Sambanova API response during {context} image processing: {str(e)}")
+            logger.error(f"Error parsing Sambanova API response during {context} image processing: {e}")
             logger.debug(f"Response: {response.text}")
             raise Exception("Unexpected response structure from Sambanova API.")
 
     except requests.exceptions.RequestException as e:
-        logger.error(f"Request exception during {context} extraction: {str(e)}")
-        raise Exception(f"Request exception during {context} extraction: {str(e)}")
+        logger.error(f"Request exception during {context} extraction: {e}")
+        raise Exception(f"Request exception during {context} extraction: {e}")
     except Exception as e:
-        logger.error(f"Error during {context} extraction: {str(e)}")
-        raise Exception(f"Error during {context} extraction: {str(e)}")
+        logger.error(f"Error during {context} extraction: {e}")
+        raise Exception(f"Error during {context} extraction: {e}")
 
 def evaluate_using_sambanova(question_text, answer_text):
+    """Evaluate the student's answer using Sambanova API."""
     try:
         prompt = (
             f"You are an experienced educator. Evaluate the student's answer to the following question. "
             f"Provide detailed feedback on the correctness, completeness, clarity, and areas for improvement. "
-            f"Assign a score out of 10 for the answer.\n\n"
+            f"Assign a score out of 10 for the answer based on its quality.\n\n"
             f"Question:\n{question_text}\n\n"
             f"Student's Answer:\n{answer_text}\n\n"
             f"Please provide your evaluation strictly in the following JSON format without any additional text or explanations:\n"
             f"{{\n"
             f'    "evaluation": "Detailed feedback here...",\n'
-            f'    "score": 8\n'
+            f'    "score": 0\n'
             f"}}"
         )
 
@@ -645,6 +655,7 @@ def evaluate_using_sambanova(question_text, answer_text):
         if response.status_code != 200:
             logger.error(f"Sambanova API error during evaluation: {response.status_code} - {response.text}")
             raise Exception(f"Sambanova API error during evaluation: {response.text}")
+
         evaluation_text = response.text
         logger.debug(f"Raw Evaluation Response:\n{evaluation_text}")
 
@@ -652,9 +663,9 @@ def evaluate_using_sambanova(question_text, answer_text):
             json_response = response.json()
             evaluation_text = json_response['choices'][0]['message']['content'].strip()
         except (KeyError, IndexError, json.JSONDecodeError) as e:
-            logger.error(f"Error parsing Sambanova API response during evaluation: {str(e)}")
+            logger.error(f"Error parsing Sambanova API response during evaluation: {e}")
             logger.debug(f"Raw Response Text: {response.text}")
-            raise Exception(f"Error parsing Sambanova API response during evaluation: {str(e)}")
+            raise Exception(f"Error parsing Sambanova API response during evaluation: {e}")
 
         logger.debug(f"AI Evaluation Content:\n{evaluation_text}")
         json_match = re.search(r'\{.*\}', evaluation_text, re.DOTALL)
@@ -662,9 +673,9 @@ def evaluate_using_sambanova(question_text, answer_text):
             try:
                 evaluation_json = json.loads(json_match.group())
             except json.JSONDecodeError as e:
-                logger.error(f"JSON decoding error: {str(e)}")
+                logger.error(f"JSON decoding error: {e}")
                 logger.debug(f"Problematic JSON String: {json_match.group()}")
-                raise Exception(f"JSON decoding error: {str(e)}")
+                raise Exception(f"JSON decoding error: {e}")
         else:
             logger.error('No JSON object found in Sambanova API response.')
             logger.debug(f"Evaluation Text: {evaluation_text}")
@@ -674,6 +685,7 @@ def evaluate_using_sambanova(question_text, answer_text):
         score = evaluation_json.get('score', None)
 
         if score is None:
+            # Attempt to extract score using regex if not present in JSON
             score_match = re.search(r'"score"\s*:\s*(\d+)', evaluation_text)
             if score_match:
                 score = int(score_match.group(1))
@@ -685,14 +697,14 @@ def evaluate_using_sambanova(question_text, answer_text):
         return evaluation, score
 
     except requests.exceptions.RequestException as e:
-        logger.error(f"Request exception during evaluation: {str(e)}")
-        raise Exception(f"Request exception during evaluation: {str(e)}")
+        logger.error(f"Request exception during evaluation: {e}")
+        raise Exception(f"Request exception during evaluation: {e}")
     except json.JSONDecodeError as e:
-        logger.error(f"JSON decoding error during evaluation: {str(e)}")
-        raise Exception(f"JSON decoding error during evaluation: {str(e)}")
+        logger.error(f"JSON decoding error during evaluation: {e}")
+        raise Exception(f"JSON decoding error during evaluation: {e}")
     except Exception as e:
-        logger.error(f"Error during evaluation: {str(e)}")
-        raise Exception(f"Error during evaluation: {str(e)}")
+        logger.error(f"Error during evaluation: {e}")
+        raise Exception(f"Error during evaluation: {e}")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))  
